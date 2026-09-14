@@ -1,0 +1,8 @@
+frame_time_ms,frame_id,frame_type,marker,ch0_function,ch0_red,ch0_green,ch0_blue,ch1_function,ch1_red,ch1_green,ch1_blue,ch2_function,ch2_red,ch2_green,ch2_blue,ch3_function,ch3_red,ch3_green,ch3_blue,ch4_function,ch4_red,ch4_green,ch4_blue,ch5_function,ch5_red,ch5_green,ch5_blue,ch6_function,ch6_red,ch6_green,ch6_blue,ch7_function,ch7_red,ch7_green,ch7_blue,ch8_function,ch8_red,ch8_green,ch8_blue
+0,0,blackout,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+500,1,color,,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0
+1000,2,color,,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0
+1500,3,color,,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15,0,0,0,15
+2000,4,color,,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0,1,15,0,0
+2500,5,rainbow,,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0,2,15,8,0
+3000,6,blackout,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

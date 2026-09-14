@@ -1,0 +1,14 @@
+# 统一换行: 仓库里一律 LF, 检出到 Windows 也不改成 CRLF
+* text=auto eol=lf
+
+# 二进制资源不要做换行/文本处理
+*.mp4 binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.ico binary
+
+# GitHub 语言统计: 让 firmware 不被当成 C++ 大项目淹掉 player
+*.py   linguist-language=Python
+*.cpp  linguist-language=C++
+*.h    linguist-language=C++
