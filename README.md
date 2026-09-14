@@ -5,11 +5,6 @@
 - `lightstick-player` —— PC 端播放器。按时间轴把 CSV 序列变成发射命令，通过串口下发给桥接固件，并可同步播放本地视频。
 - `firmware` —— ESP32-S3 桥接固件。用 RMT 产生微秒级精确的 OOK 波形，由 CC1101 发出去。**固件只提供通用发射框架，不含具体协议。**
 
-> 本仓库的固件是 **Lightstick-Lab**（`GPL-3.0-only`）的派生作品，因此整体以 `GPL-3.0-only` 发布。
-> 详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## 免责声明
-
 本项目是无线电与嵌入式学习用途的工具，**仅供实验和学习**。
 
 - 请遵守你所在国家/地区的无线电法规；未经许可发射可能违法。
@@ -22,7 +17,7 @@
 ```text
 esp32-cc1101-ook-tx/
 ├── lightstick-player/        PC 端播放器 (Python)
-│   ├── protocol.py           空口协议实现  ★ 协议在这里
+│   ├── protocol.py           空口协议实现
 │   ├── main.py               命令行播放器
 │   ├── gui.py                Tkinter 图形界面 (含全屏)
 │   ├── csv_loader.py         CSV 解析
@@ -108,64 +103,6 @@ python gui.py
 
 **全屏播放视频**：`⛶ 全屏` 按钮 / `播放时全屏` 勾选框 / `F11` 切换 / `Esc` 退出 / 双击预览画面。全屏与嵌入预览之间来回切换时画面不中断、时间轴不倒退。
 
-### 打包成 Windows exe
-
-```bash
-cd lightstick-player
-pip install pyinstaller
-py build_exe.py            # 打两个 exe, 单文件模式
-py build_exe.py --onedir   # 单目录模式 (启动快很多, 但要带整个文件夹)
-py build_exe.py --both-modes   # 两种都出
-```
-
-产物在 `dist/`：
-
-| 文件 | 说明 |
-| --- | --- |
-| `lightstick-player.exe` | 图形界面版。无控制台，双击即用 |
-| `lightstick-player-cli.exe` | 命令行版。带控制台，`--list-ports` / 播放等 |
-
-**为什么是两个**：`--windowed` 的进程没有 stdout，命令行模式会变成哑巴；`--console` 的进程双击时会多一个黑框。分开打各自都正常。
-
-#### 单文件 vs 单目录（实测差 10 倍）
-
-| 模式 | 启动耗时 | 体积 | 分发方式 |
-| --- | --- | --- | --- |
-| 单文件（默认） | **5.0 ~ 6.0 秒** | 每个 11.5 MB | 拷一个 exe 就行 |
-| 单目录（`--onedir`） | **0.5 秒**（首次 1.4 秒） | 16.1 MB / 953 个文件 | 要拷整个文件夹 |
-
-单文件每次运行都要把 11.5 MB 解压到 `%TEMP%`，所以慢。**自己日常用建议单目录**，
-打包给别人用再上单文件。两种模式可以一起产出（互不覆盖，单目录版在子目录里）：
-
-```bash
-py build_exe.py --both-modes
-```
-
-在没装 Python 的机器上都能直接跑。
-
-目标机器跑不起来时，先让对方执行这一条，环境问题一目了然：
-
-```bash
-lightstick-player-cli.exe --selftest
-```
-
-它会报告 tkinter / pyserial / libVLC / ffprobe 是否就绪。
-
-#### 打包时踩到的坑（`build_exe.py` 里都处理了）
-
-1. **Python 3.14 的 Tcl/Tk 脚本库是 zip 形式内嵌的**。Tcl 9 通过 zipfs 挂载它，
-   `info library` 返回 `//zipfs:/lib/tcl/tcl_library` 这种虚拟路径，PyInstaller 用
-   `os.path.isdir()` 判断数据目录是否存在，必然为假，于是 `_tcl_data` / `_tk_data` 一个都没打进包，
-   exe 一启动就报 `FileNotFoundError: Tcl data directory ... not found`。
-   解决办法：把 `libtcl*.zip` / `libtk*.zip` 解开，手动作为 `_tcl_data` / `_tk_data` 加进去。
-2. **暂存目录不能放在 PyInstaller 的 workpath 里**。`--clean` 会清空整个 workpath，
-   于是第一个 exe 打完，第二个就找不到刚解出来的 Tcl 数据了。现在放在 `%TEMP%` 下。
-3. **一次性打包在 Windows 上是两个进程**（引导器 + 真正的 Python 进程），
-   窗口属于子进程。写脚本验证窗口有没有起来时要查子进程，别只看 `Start-Process -PassThru` 拿到的那个。
-
-> 视频同步依赖目标机器装有 **VLC**（libVLC），视频元数据探测依赖 **ffprobe**。
-> 两者都不装也能用，只是没有视频功能 —— exe 里没有捆绑它们。
-
 ### CSV 格式
 
 | 列 | 说明 |
@@ -178,6 +115,7 @@ lightstick-player-cli.exe --selftest
 
 N = 0..9。示例见 `lightstick-player/examples/demo.csv`。
 
+**CSV可通过Lumaflow制作，详见[【开源】演唱会荧光棒灯效效果编排软件 LumaFlow】](https://www.bilibili.com/video/BV1k3kbBdE19?vd_source=d0f8cbfcf2274a9a5233ff1475faf0e5)，仓库[Lumaflow](https://github.com/ltyridium/LumaFlow)**
 ### 帧间隔下限（实测）
 
 空口帧长 = (前导符号数 + 字节数 × 8 × 每数据位符号数) × 符号宽度，**这决定了最快能播多快**。
@@ -285,7 +223,7 @@ pio device monitor -b 921600             # 可选: 看串口输出
 | 单帧字节数 | ≤ 64 |
 | 单帧符号数 | ≤ 8192 |
 
-## 空口协议（★ 提供的代码里没有这部分实现）
+## 空口协议（提供的代码里没有这部分实现）
 
 **重要：本仓库发布的固件不含任何具体空口协议。**
 
@@ -392,3 +330,4 @@ python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需
 - [python-vlc](https://github.com/oaubert/python-vlc) —— 视频播放与同步主时钟
 - [Lightstick-Lab](https://github.com/AcosX/Lightstick-Lab) 
 - [Lumaflow](https://github.com/ltyridium/LumaFlow)
+- [场控协议的一些小研究](https://bbs.lty.fan/thread/39771) —— 感谢大佬解码协议
