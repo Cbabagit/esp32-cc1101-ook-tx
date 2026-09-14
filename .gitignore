@@ -6,6 +6,16 @@ firmware/.vscode/
 *.elf
 *.map
 
+# ---- PyInstaller 打包产物 (用 build_exe.py 生成, 不入库) ----
+lightstick-player/build/
+lightstick-player/dist/
+*.spec
+
+# ---- PyInstaller 打包产物 (用 build_exe.py 生成, 不入库) ----
+lightstick-player/build/
+lightstick-player/dist/
+*.spec
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
