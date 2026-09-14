@@ -1,8 +1,8 @@
 # ESP32-S3 + CC1101 OOK 发射套件
 
-把 **433 MHz OOK/ASK 脉冲**送到空中的一套工具。分两部分：
+简单来说就是把 **433 MHz OOK/ASK 脉冲**送到空中的一套工具。分两部分：
 
-- `lightstick-player` —— PC 端播放器。按时间轴把 CSV 序列变成发射命令，通过串口下发给桥接固件，并可同步播放本地视频。**空口协议实现在这一侧。**
+- `lightstick-player` —— PC 端播放器。按时间轴把 CSV 序列变成发射命令，通过串口下发给桥接固件，并可同步播放本地视频。
 - `firmware` —— ESP32-S3 桥接固件。用 RMT 产生微秒级精确的 OOK 波形，由 CC1101 发出去。**固件只提供通用发射框架，不含具体协议。**
 
 > 本仓库的固件是 **Lightstick-Lab**（`GPL-3.0-only`）的派生作品，因此整体以 `GPL-3.0-only` 发布。
@@ -332,3 +332,5 @@ python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需
 - [SmartRC-CC1101-Driver-Lib](https://github.com/LSatan/SmartRC-CC1101-Driver-Lib) —— CC1101 驱动
 - [ArduinoJson](https://github.com/bblanchon/ArduinoJson) —— JSON 解析
 - [python-vlc](https://github.com/oaubert/python-vlc) —— 视频播放与同步主时钟
+- [Lightstick-Lab](https://github.com/AcosX/Lightstick-Lab) 
+- [Lumaflow](https://github.com/ltyridium/LumaFlow)
