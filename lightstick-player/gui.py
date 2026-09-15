@@ -78,6 +78,12 @@ class LightstickPlayerApp:
         self.last_channels = [(0, 0, 0, 0)] * d8.SLOT_WORDS
         self.freq = d8.DEFAULT_FREQ_HZ
         self.power = d8.DEFAULT_POWER_DBM
+        # ---- 下面是给 CPU 减负用的缓存, 别删 ----
+        self._cell_cache = [None] * d8.SLOT_WORDS   # 通道预览上一帧渲染的值
+        self._shown_tenth = None                    # 时间标签上次显示到 0.1s 的刻度
+        self._shown_total = None
+        self._video_duration_ms = 0                 # 视频时长, 缓存住别每 tick 问 libVLC
+        self._log_lines = 0                         # 日志行数, 自己数, 不查 Text 控件
 
         self._build_ui()
         self.refresh_ports()
@@ -226,13 +232,18 @@ class LightstickPlayerApp:
         return (sw, fn, rgb)
 
     # ---------------- 日志 ----------------
+    LOG_MAX_LINES = 500
+
     def _log(self, msg: str):
+        # 原先每条日志都查一次 Text 控件的行号(index 是一次 Tk 调用), 播放时
+        # 每秒几十条, 纯属浪费。行数自己数就行。
+        self._log_lines += msg.count("\n") + 1
         self.log.configure(state="normal")
         self.log.insert("end", msg + "\n")
-        # 限制行数, 防止日志无限增长拖慢 GUI
-        line_count = int(self.log.index("end-1c").split(".")[0])
-        if line_count > 500:
-            self.log.delete("1.0", f"{line_count - 500}.0")
+        if self._log_lines > self.LOG_MAX_LINES:
+            drop = self._log_lines - self.LOG_MAX_LINES
+            self.log.delete("1.0", f"{drop}.0")
+            self._log_lines = self.LOG_MAX_LINES
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -336,6 +347,8 @@ class LightstickPlayerApp:
                     self._open_fullscreen_window()
                 self._attach_video()
                 self.vp.play()
+                # 时长缓存住: 播放中每 tick 都问 libVLC 一次是白费
+                self._video_duration_ms = self.vp.duration_ms()
                 if self.fs_active:
                     self.fs_window.focus_force()
             except Exception as e:
@@ -345,6 +358,8 @@ class LightstickPlayerApp:
 
         # 时间轴
         self.clock.reset()
+        self._shown_tenth = None       # 强制下一拍刷新一次时间显示
+        self._shown_total = None
         sender = self._make_sender()
         mode, burst, repeat, bit_us = self._params()
         cost = main_mod.frames_cost_ms(mode, burst, bit_us, d8.AIR_GAP_US, repeat, True)
@@ -392,6 +407,10 @@ class LightstickPlayerApp:
         self.tl = None
         self.clock.reset()
         self.state = "idle"
+        self._video_duration_ms = 0
+        self._shown_tenth = None
+        self._shown_total = None
+        self._cell_cache = [None] * d8.SLOT_WORDS
         self.play_btn.config(state="normal")
         self.pause_btn.config(state="disabled", text="⏸ 暂停")
         self.stop_btn.config(state="disabled")
@@ -533,38 +552,68 @@ class LightstickPlayerApp:
         return send
 
     def _update_channels(self, chans):
+        """刷新 9 个通道预览。
+
+        每格 3 次 config = 9 格 27 次 Tk 调用, 每帧都做是播放时最大的 CPU 开销。
+        动画里通常只有颜色在变、功能码和 RGB 文本没变, 所以逐格比对, 没变就跳过。
+        """
         self.last_channels = chans
         for i, (sw, fn, rgb) in enumerate(self.swatches):
-            f, r, g, b = chans[i] if i < len(chans) else (0, 0, 0, 0)
-            sw.config(bg=rgb4_to_hex(r, g, b))
-            fn.config(text=FUNC_NAME.get(f & 0x3, str(f)))
-            rgb.config(text=f"{r},{g},{b}")
+            value = chans[i] if i < len(chans) else (0, 0, 0, 0)
+            if value == self._cell_cache[i]:
+                continue
+            previous = self._cell_cache[i]
+            self._cell_cache[i] = value
+            f, r, g, b = value
+            old_f, old_r, old_g, old_b = previous or (None, None, None, None)
+            if previous is None or (r, g, b) != (old_r, old_g, old_b):
+                sw.config(bg=rgb4_to_hex(r, g, b))
+            if previous is None or (f & 0x3) != (old_f & 0x3):
+                fn.config(text=FUNC_NAME.get(f & 0x3, str(f)))
+            if previous is None or (r, g, b) != (old_r, old_g, old_b):
+                rgb.config(text=f"{r},{g},{b}")
 
     # ---------------- 主循环 tick ----------------
+    TICK_ACTIVE_MS = 5      # 播放中: 时间轴要 5ms 一拍才能准时发帧
+    TICK_IDLE_MS = 150      # 空闲: 没必要 200Hz 空转
+
     def _tick(self):
+        interval = self.TICK_IDLE_MS
         if self.tl is not None and self.state in ("playing", "paused"):
+            interval = self.TICK_ACTIVE_MS
             if self.state == "playing":
                 self.tl.tick()
-            now = self._clock()()
+            now = self._clock_now()
             total = self._total_ms()
-            if total > 0:
-                self.progress["maximum"] = total
-                self.progress["value"] = min(now, total)
-            self.time_label.config(text=f"{now/1000:.1f}s / {total/1000:.1f}s")
+            # 进度条与时间标签的显示精度只有 0.1s, 200Hz 重绘纯属白烧 CPU
+            # (实测这是播放时第二大开销)。只在显示内容真变了才碰控件。
+            tenth = now // 100
+            if tenth != self._shown_tenth or total != self._shown_total:
+                self._shown_tenth = tenth
+                self._shown_total = total
+                if total > 0:
+                    self.progress["maximum"] = total
+                    self.progress["value"] = min(now, total)
+                self.time_label.config(text=f"{now/1000:.1f}s / {total/1000:.1f}s")
             if self.tl.done and (self.vp is None or not self.vp.is_playing()):
                 if self.tl.dropped:
                     self._log(f"播放完成 (跳过 {self.tl.dropped} 帧以跟上视频)")
                 else:
                     self._log("播放完成")
                 self.stop()
-        self.root.after(5, self._tick)
+        self.root.after(interval, self._tick)
+
+    def _clock_now(self) -> int:
+        """当前主时钟(毫秒)。直接算, 不要每 tick 新建一个 lambda。"""
+        if self.vp is not None:
+            return max(0, self.vp.time_ms() - self.sync_offset)
+        return max(0, self.clock.now_ms() - self.sync_offset)
 
     def _total_ms(self):
-        total = 0
-        if self.frames:
-            total = int(self.frames[-1].time_ms)
-        if self.vp is not None:
-            total = max(total, self.vp.duration_ms())
+        total = int(self.frames[-1].time_ms) if self.frames else 0
+        # 视频时长不会变, 缓存住; 之前每 tick 都往 libVLC 问一次
+        if self._video_duration_ms > 0:
+            total = max(total, self._video_duration_ms)
         return total
 
 

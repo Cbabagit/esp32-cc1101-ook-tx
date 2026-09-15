@@ -312,8 +312,9 @@ python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需
                                  # 用的是 examples/testclip.mp4 (ffmpeg 生成的测试片)
 ```
 
-`lightstick-player/tools/` 下还有几个真机用的脚本：`port_state.py`（串口是否可用）、
-`quick_sweep.py`（逐档点亮看接收端反应）、`vlc_hwnd_probe.py`（排查视频输出黑屏）。
+`lightstick-player/tools/` 下还有几个脚本：`bench_cpu.py`（GUI 的 CPU 占用基准，改 UI 前后对比用）、
+`port_state.py`（串口是否可用）、`quick_sweep.py`（逐档点亮看接收端反应）、
+`vlc_hwnd_probe.py`（排查视频输出黑屏）。
 
 ## 许可证
 

@@ -45,6 +45,11 @@ PALETTE = {
 }
 COLOR_KEEP = 0xAA  # 保持当前颜色
 
+# 调色板的 hex 预先解析成整数。nearest_palette 每条命令要对 9 个通道各调一次,
+# 每次都把 16 个色码的 hex 重新 int() 一遍是纯浪费 (c0/zone 模式每帧 432 次解析)。
+PALETTE_RGB = {code: (int(hx[1:3], 16), int(hx[3:5], 16), int(hx[5:7], 16))
+               for code, (_name, hx) in PALETTE.items()}
+
 
 # ---- 纯助手 ----
 def checksum(data: bytes) -> int:
@@ -231,10 +236,7 @@ def nearest_palette(r: int, g: int, b: int) -> int:
     """RGB (0-15 每分量) -> 最近的 16 色调色板色码 (0-15)。"""
     r8, g8, b8 = r * 17, g * 17, b * 17
     best, best_dist = 0, 1 << 30
-    for code, (_name, hx) in PALETTE.items():
-        hr = int(hx[1:3], 16)
-        hg = int(hx[3:5], 16)
-        hb = int(hx[5:7], 16)
+    for code, (hr, hg, hb) in PALETTE_RGB.items():
         d = (r8 - hr) ** 2 + (g8 - hg) ** 2 + (b8 - hb) ** 2
         if d < best_dist:
             best_dist, best = d, code
