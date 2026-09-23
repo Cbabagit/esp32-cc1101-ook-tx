@@ -124,7 +124,30 @@ def main():
     check(len(board.commands) == 0, "超过 %d 字节的命令被丢弃" % transport.UDP_MAX_COMMAND)
     tx2.close()
 
-    # ---- 5) 工厂描述串 ----
+    # ---- 5) 传错地址要在连接时就报错, 而不是每帧刷 getaddrinfo failed ----
+    # 这是实际踩过的坑: GUI 里 UDP 地址和 BLE 设备名共用一个输入框, 扫完 BLE
+    # 再切到 UDP, 就把 "Lightstick N16R8" 当 IP 发出去了。
+    try:
+        transport.open_transport("udp:Lightstick N16R8")
+        check(False, "非法 UDP 地址应当抛异常")
+    except RuntimeError as exc:
+        check("无法解析" in str(exc), "非法 UDP 地址给出可读的错误: %s" % str(exc)[:60])
+    except Exception as exc:
+        check(False, "非法 UDP 地址抛了意外的异常类型: %r" % exc)
+
+    # ---- 6) 同一个错误只报一次 (播放时 20 次/秒的刷屏就是这里来的) ----
+    reporter = transport._Reporter(interval=60.0)
+    import io
+    import contextlib
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        for _ in range(50):
+            reporter.report("同一个错误")
+        reporter.report("另一个错误")
+    lines = [l for l in buffer.getvalue().splitlines() if l.strip()]
+    check(len(lines) == 2, "重复错误被去重 (50 次 -> %d 行)" % len(lines))
+
+    # ---- 7) 工厂描述串 ----
     dry = transport.open_transport("dry")
     check(dry.kind == "dry", "open_transport('dry') 返回 DryRunTransport")
     check(transport.LightstickTransport is transport.SerialTransport,

@@ -116,18 +116,28 @@ class LightstickPlayerApp:
         row3 = ttk.Frame(top)
         row3.pack(fill="x", **pad)
         ttk.Label(row3, text="连接:").pack(side="left")
-        self.transport_var = tk.StringVar(value="USB 串口")
+        self.TRANSPORTS = ("USB 串口", "WiFi UDP", "BLE 蓝牙")
+        self.transport_var = tk.StringVar(value=self.TRANSPORTS[0])
         ttk.Combobox(row3, textvariable=self.transport_var,
-                     values=("USB 串口", "WiFi UDP", "BLE 蓝牙"),
+                     values=self.TRANSPORTS,
                      width=10, state="readonly").pack(side="left", padx=4)
         ttk.Label(row3, text="串口:").pack(side="left")
         self.port_var = tk.StringVar()
-        self.port_cb = ttk.Combobox(row3, textvariable=self.port_var, width=12)
+        self.port_cb = ttk.Combobox(row3, textvariable=self.port_var, width=10)
         self.port_cb.pack(side="left", padx=4)
-        ttk.Label(row3, text="地址:").pack(side="left")
+        # 地址框对 UDP 是 IP、对 BLE 是设备名, 两者不通用。
+        # 之前共用一个变量, 扫完 BLE 再切到 UDP 就会把设备名当 IP 发出去,
+        # 结果每帧报一次 getaddrinfo failed。这里按传输各记一份。
+        self.addr_label = ttk.Label(row3, text="地址:")
+        self.addr_label.pack(side="left")
         self.addr_var = tk.StringVar()
-        ttk.Entry(row3, textvariable=self.addr_var, width=18).pack(side="left", padx=4)
+        self.addr_entry = ttk.Entry(row3, textvariable=self.addr_var, width=18)
+        self.addr_entry.pack(side="left", padx=4)
+        self._addr_memory = {name: "" for name in self.TRANSPORTS}
+        self._last_transport = self.transport_var.get()
+        self.transport_var.trace_add("write", self._on_transport_changed)
         ttk.Button(row3, text="扫描", command=self.scan_devices).pack(side="left")
+        self._on_transport_changed()
         self.connect_btn = ttk.Button(row3, text="连接", command=self.toggle_connect)
         self.connect_btn.pack(side="left", padx=4)
         self.conn_state = ttk.Label(row3, text="未连接")
@@ -286,6 +296,37 @@ class LightstickPlayerApp:
         if ports and not self.port_var.get():
             self.port_var.set(ports[0])
 
+    def _on_transport_changed(self, *_args):
+        """切换连接方式时, 把地址框的内容按传输类型各存一份再换回来。"""
+        current = self.transport_var.get()
+        previous = self._last_transport
+        if previous in self._addr_memory and current != previous:
+            self._addr_memory[previous] = self.addr_var.get().strip()
+            self.addr_var.set(self._addr_memory.get(current, ""))
+            self._log("连接方式: %s" % current)
+        self._last_transport = current
+        if current == "WiFi UDP":
+            self.addr_label.config(text="IP:")
+            self.addr_entry.config(state="normal")
+        elif current == "BLE 蓝牙":
+            self.addr_label.config(text="名称:")
+            self.addr_entry.config(state="normal")
+        else:
+            self.addr_label.config(text="地址:")
+            self.addr_entry.config(state="disabled")
+
+    def _on_transport_state(self, tx, connected, label):
+        """传输层上报链路状态 (目前只有 BLE 会主动报断开)。"""
+        if tx is not self.tx:
+            return          # 旧连接的回调, 忽略
+        if connected:
+            self.conn_state.config(text="已连接 " + label)
+            return
+        self.conn_state.config(text="已断开 " + label)
+        self.connect_btn.config(text="连接")
+        self.tx = None
+        self._log("连接已断开: %s —— 需要时点「连接」重连" % label)
+
     def _transport_spec(self):
         """把界面上的三项合成 open_transport() 能吃的描述串。"""
         kind = self.transport_var.get()
@@ -356,9 +397,17 @@ class LightstickPlayerApp:
             return
         self.connect_btn.config(state="disabled", text="连接中...")
 
+        holder = {}
+
+        def on_state(connected, label):
+            self.root.after(0, lambda: self._on_transport_state(
+                holder.get("tx"), connected, label))
+
         def worker():
             try:
-                tx = transport_mod.open_transport(spec, log=self._log)
+                tx = transport_mod.open_transport(spec, log=self._log,
+                                                  on_state=on_state)
+                holder["tx"] = tx
                 self.root.after(0, lambda: self._finish_connect(spec, tx))
             except Exception as exc:
                 self.root.after(0, lambda: self._finish_connect(spec, None, exc))

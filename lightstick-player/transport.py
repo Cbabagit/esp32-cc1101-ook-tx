@@ -56,6 +56,28 @@ def list_ports() -> List[str]:
         return []
 
 
+class _Reporter:
+    """同一个错误只报一次, 之后按间隔静音。
+
+    播放时每帧都会发命令, 链路一断就是 20 次/秒的重复报错, 刷屏且掩盖真正的问题。
+    """
+
+    def __init__(self, interval: float = 10.0):
+        self.interval = interval
+        self._last: dict = {}
+
+    def report(self, message: str) -> None:
+        now = time.monotonic()
+        previous = self._last.get(message)
+        if previous is not None and now - previous < self.interval:
+            return
+        self._last[message] = now
+        print("[transport] " + message, file=sys.stderr)
+
+    def reset(self) -> None:
+        self._last.clear()
+
+
 class Transport:
     """传输层公共接口。"""
 
@@ -203,6 +225,16 @@ class UdpTransport(Transport):
             host = self.info.get("ip") or self.info.get("_addr")
             self._log("UDP: 发现 %s (%s)" % (host, self.info.get("hostname", "?")))
         self.host = host
+        self._reporter = _Reporter()
+
+        # 地址在这里就解析掉。放给 sendto 的话, 地址写错会变成每帧一次的
+        # "getaddrinfo failed", 既看不出原因又刷屏。
+        try:
+            self._target = (socket.gethostbyname(host), port)
+        except OSError as exc:
+            raise RuntimeError(
+                "UDP 地址无法解析: %r (%s)。--host 要填 IP, 例如 --host 192.168.1.57;"
+                " 留空则自动发现。" % (host, exc)) from exc
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -229,16 +261,17 @@ class UdpTransport(Transport):
             self._latest = payload
 
     def _loop(self) -> None:
-        target = (self.host, self.port)
         while not self._stop.is_set():
             with self._lock:
                 payload = self._latest
                 self._latest = None
             if payload is not None:
                 try:
-                    self._sock.sendto(payload, target)
+                    self._sock.sendto(payload, self._target)
+                    self._reporter.reset()
                 except Exception as exc:
-                    print("[transport] udp send error: %s" % exc, file=sys.stderr)
+                    self._reporter.report("udp 发送失败 (目标 %s:%d): %s"
+                                          % (self._target[0], self._target[1], exc))
             self._drain_replies()
             time.sleep(0.005)
 
@@ -282,6 +315,7 @@ class BleTransport(Transport):
 
     def __init__(self, name: Optional[str] = None, address: Optional[str] = None,
                  log=None, on_reply: Optional[Callable[[dict], None]] = None,
+                 on_state: Optional[Callable[[bool, str], None]] = None,
                  scan_timeout: float = 10.0, connect_timeout: float = 25.0):
         import asyncio
         try:
@@ -294,10 +328,13 @@ class BleTransport(Transport):
         self._BleakScanner = BleakScanner
         self._log = log or (lambda s: None)
         self.on_reply = on_reply
+        self.on_state = on_state
         self.name = name or BLE_DEVICE_NAME
         self.address = address
         self.device_label = address or self.name
         self._scan_timeout = scan_timeout
+        self._reporter = _Reporter()
+        self._connected = False
 
         self._latest: Optional[bytes] = None
         self._lock = threading.Lock()
@@ -356,10 +393,12 @@ class BleTransport(Transport):
         target = await self._find_device()
         self.device_label = target
         self._log("BLE: 连接 %s ..." % target)
-        client = self._BleakClient(target)
+        client = self._BleakClient(target, disconnected_callback=self._on_disconnect)
         await client.connect()
         self._client = client
         await client.start_notify(BLE_RESPONSE_UUID, self._on_notify)
+        self._connected = True
+        self._reporter.reset()
         self._ready.set()
         try:
             await self._writer(client)
@@ -373,6 +412,20 @@ class BleTransport(Transport):
             except Exception:
                 pass
 
+    def _on_disconnect(self, _client=None) -> None:
+        """链路断了。只通知一次, 并停掉后续写入 —— 否则每帧都会报一次
+        "Not connected", 播放时就是 20 次/秒。"""
+        if self._connected:
+            self._connected = False
+        if self.on_state is not None:
+            self.on_state(False, self.device_label)
+
+    def is_connected(self) -> bool:
+        client = self._client
+        if client is None:
+            return False
+        return self._connected and bool(getattr(client, "is_connected", False))
+
     async def _writer(self, client) -> None:
         while not self._stop.is_set():
             with self._lock:
@@ -381,10 +434,16 @@ class BleTransport(Transport):
             if payload is None:
                 await self._asyncio.sleep(0.005)
                 continue
+            if not self.is_connected():
+                # 断线时丢掉待发命令: 不留积压, 也不刷错误
+                continue
             try:
                 await client.write_gatt_char(BLE_COMMAND_UUID, payload, response=False)
+                self._reporter.reset()
             except Exception as exc:
-                print("[transport] ble write error: %s" % exc, file=sys.stderr)
+                self._reporter.report("ble 写入失败: %s" % exc)
+                if not getattr(client, "is_connected", False):
+                    self._on_disconnect(client)
 
     def _on_notify(self, _characteristic, data: bytearray) -> None:
         """固件按 180 字节分片发通知, 用换行做帧界, 这里拼回来。"""

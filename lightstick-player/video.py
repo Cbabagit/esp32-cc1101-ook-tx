@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -70,7 +71,15 @@ class VlcPlayer:
         import vlc
         self._vlc = vlc
         self._platform = platform or sys.platform
-        self.instance = vlc.Instance()
+        # libVLC 默认会把解码器/vout 的提示直接打到 stderr, 播放时刷屏,
+        # 把真正有用的日志淹掉:
+        #   avcodec decoder: Using D3D11VA ... for hardware decoding
+        #   direct3d11 vout display error: SetThumbNailClip failed: 0x800706f4
+        # 实测 --quiet 能把这两类都消掉 (9 行 -> 0 行)。
+        # 排查播放问题时设 LIGHTSTICK_VLC_VERBOSE=1 恢复完整日志。
+        verbose = os.environ.get("LIGHTSTICK_VLC_VERBOSE", "").strip().lower()
+        quiet_args = [] if verbose not in ("", "0", "false", "no") else ["--quiet"]
+        self.instance = vlc.Instance(quiet_args) if quiet_args else vlc.Instance()
         self.media = self.instance.media_new(path)
         self.player = self.instance.media_player_new()
         self.player.set_media(self.media)
