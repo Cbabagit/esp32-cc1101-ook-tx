@@ -426,9 +426,15 @@ class LightstickPlayerApp:
             return
 
         self._log(f"连接 {spec} ...")
-        # UDP 发现最长等 1.5s, BLE 扫描+连接可能十几秒, 别卡住 Tk 主线程
+        # 串口打开是毫秒级的, 直接在当前线程做完;
+        # UDP 发现最长等 1.5s、BLE 扫描+连接可能十几秒, 这两个才需要后台线程。
         if spec.startswith("usb:"):
-            self._finish_connect(spec, None)
+            try:
+                tx = transport_mod.open_transport(spec, log=self._log)
+            except Exception as exc:
+                self._finish_connect(spec, None, exc)
+                return
+            self._finish_connect(spec, tx)
             return
         self.connect_btn.config(state="disabled", text="连接中...")
 

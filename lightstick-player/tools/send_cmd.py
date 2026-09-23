@@ -31,6 +31,10 @@ def main():
     args = ap.parse_args()
 
     payload = args.payload.strip()
+    # @文件名: 从文件读 JSON。PowerShell 会把命令行里的引号搅乱, 复杂参数走文件最省事。
+    if payload.startswith("@"):
+        with open(payload[1:], "r", encoding="utf-8") as handle:
+            payload = handle.read()
     # 允许直接给命令名, 省得在 PowerShell 里跟引号打架
     if not payload.startswith("{"):
         payload = json.dumps({"cmd": payload})

@@ -85,6 +85,61 @@ def gui_check():
             pass
 
 
+def gui_check_serial():
+    """GUI 的串口连接路径。这里曾经写成 _finish_connect(spec, None),
+    根本没打开串口, 而且 tx=None 且 error=None 时是静默返回 —— 表现就是
+    "点了连接没反应"。"""
+    import tkinter as tk
+    import gui as gui_mod
+
+    ports = transport.list_ports()
+    if not ports:
+        print("  skip GUI 串口路径: 没有可用串口")
+        return
+
+    popups = []
+
+    class FakeBox:
+        def showerror(self, *args, **kwargs):
+            popups.append(args)
+
+        def showwarning(self, *args, **kwargs):
+            popups.append(args)
+
+        def showinfo(self, *args, **kwargs):
+            popups.append(args)
+
+    real_messagebox = gui_mod.messagebox
+    gui_mod.messagebox = FakeBox()
+    root = tk.Tk()
+    root.withdraw()
+    app = gui_mod.LightstickPlayerApp(root)
+    try:
+        app.transport_var.set("USB 串口")
+        app.port_var.set(ports[0])
+        check(app._transport_spec() == "usb:" + ports[0], "界面能拼出 usb 描述串")
+        app.toggle_connect()
+        root.update()
+        check(not popups, "GUI 串口连接没弹错误框: %s" % (popups[:1],))
+        check(app.tx is not None and app.tx.kind == "usb",
+              "GUI 连上了串口 (tx=%s)" % (app.tx.describe() if app.tx else None))
+        check(app.connect_btn.cget("text") == "断开", "按钮变「断开」")
+        app.toggle_connect()
+        root.update()
+        check(app.tx is None, "GUI 能断开串口")
+    finally:
+        gui_mod.messagebox = real_messagebox
+        try:
+            if app.tx is not None:
+                app.tx.close()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default=None)
@@ -148,6 +203,8 @@ def main():
     # 这里曾经漏传 on_state 给工厂, 一连 BLE 就 TypeError。
     # 光测 transport 层发现不了, 必须真的走 GUI 那条路。
     gui_check()
+    gui_check_serial()
+
 
     print()
     print("%d passed, %d failed" % (PASS, FAIL))
