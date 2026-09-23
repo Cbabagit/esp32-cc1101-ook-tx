@@ -3,6 +3,7 @@
 简单来说就是把 **433 MHz OOK/ASK 脉冲**送到空中的一套工具。分两部分：
 
 - `lightstick-player` —— PC 端播放器。按时间轴把 CSV 序列变成发射命令，通过串口下发给桥接固件，并可同步播放本地视频。
+- `android-player` —— Android 端播放器。实时点灯 + CSV 序列编排，支持 Wi-Fi / BLE / HTTP 三种链路。
 - `firmware` —— ESP32-S3 桥接固件。用 RMT 产生微秒级精确的 OOK 波形，由 CC1101 发出去。**固件只提供通用发射框架，不含具体协议。**
 
 本项目是无线电与嵌入式学习用途的工具，**仅供实验和学习**。
@@ -34,6 +35,14 @@ esp32-cc1101-ook-tx/
 │   └── src/
 │       ├── main.cpp          命令解析 + RMT 发射 + 通用空口编码
 │       └── recorder.cpp/.h   USB 存储录制
+├── android-player/           Android 端播放器 (Kotlin + Compose)
+│   ├── app/src/main/java/com/lightstick/player/
+│   │   ├── protocol/         空口协议实现 (与 protocol.py 逐字节一致)
+│   │   ├── transport/        Wi-Fi UDP / BLE / HTTP / USB(占位)
+│   │   ├── ui/               实时 / 编排 / 设备 / 编辑 四个页面
+│   │   ├── AppViewModel.kt   全局状态与动作
+│   │   └── CsvParser.kt      CSV 解析
+│   └── app/src/test/         协议单元测试 (真值取自 protocol.py)
 ├── LICENSE                   GPL-3.0-only
 └── THIRD_PARTY_NOTICES.md
 ```
@@ -45,6 +54,7 @@ esp32-cc1101-ook-tx/
 | 控制板 | ESP32-S3-DevKitC-1 **N16R8**（16 MB Flash、8 MB OPI PSRAM） |
 | 射频模块 | CC1101 模块（433 MHz 频段） |
 | 主机 | Windows / macOS / Linux，Python 3.10+ |
+| 手机端 | Android 8.0 (API 26) 及以上 |
 
 CC1101 使用 **3.3 V** 逻辑与供电，**不能接 5 V**。ESP32-S3 与 CC1101 必须共地。
 
@@ -184,6 +194,91 @@ N = 0..9。示例见 `lightstick-player/examples/demo.csv`。
 | 7 字节 | 185 | 250 µs | 46.3 ms | ~64 ms |
 
 固定开销约 15 ms/条（CC1101 SPI + 校准 + RMT 安装卸载 + 串口往返）。
+
+## 安卓播放器 android-player
+
+`lightstick-player` 的 Android 端对应物。Kotlin + Jetpack Compose，Material 3 原生风格，主题色 `#66CCFF`，
+界面支持简体中文 / 繁體中文 / English（跟随系统）。
+
+**它只负责「发射什么」，433 MHz 波形依旧由固件产生。**
+
+| 项 | 值 |
+| --- | --- |
+| 包名 | `com.lightstick.player` |
+| 最低版本 | Android 8.0 (API 26) |
+| 编译 / 目标 SDK | API 37 |
+| 构建 | AGP 9.4.1 + Gradle 9.7.1 + Kotlin 2.4.20 |
+
+### 编译与安装
+
+```bash
+cd android-player
+./gradlew assembleDebug          # Windows: gradlew.bat assembleDebug
+```
+
+产物在 `app/build/outputs/apk/debug/app-debug.apk`，约 18 MB。
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+或者直接把 apk 拷进手机点安装（需要允许「未知来源」）。也可以从本仓库的 Releases 页直接下载。
+
+> **AGP 9 起 Kotlin 支持已内置**，不要再加 `org.jetbrains.kotlin.android` 插件，否则构建直接报错，
+> 只需要 `org.jetbrains.kotlin.plugin.compose`。JDK 17 以上即可（Android Studio 自带的 JBR 就行）。
+>
+> `gradle-wrapper.properties` 里的 `distributionUrl` 换成了腾讯镜像 —— 官方源在国内实测只有 0.08 MB/s。
+> 想换回官方源改成 `https://services.gradle.org/distributions/gradle-9.7.1-bin.zip` 即可。
+
+### 界面
+
+底部四个标签页：
+
+| 页面 | 内容 |
+| --- | --- |
+| 实时 | 手动点灯：两路颜色（系统取色器 + 16 色调色板）、亮度、模式、9 个槽位独立开关与调色、下发 / 黑场 / 终端 |
+| 编排 | 载入 CSV 序列并播放 / 暂停 / 停止 |
+| 设备 | 板子信息与滚动日志（每条下发命令和板子回包都在这里） |
+| 编辑 | 占位页，编排逻辑待做 |
+
+「终端」可以直接手打 JSON 命令发给板子，用来调固件里那些还没做成按钮的命令。
+
+### 连接方式
+
+| 传输 | 状态 | 说明 |
+| --- | --- | --- |
+| Wi-Fi UDP | 可用 | 广播发现 + JSON 命令，端口 4210，单包 ≤ 1400 字节 |
+| BLE | 可用 | 服务 `8f7a0001-4c53-4331-9638-53334e313652`，命令特征 `…0002`，响应特征 `…0003` |
+| HTTP | 可用 | 板载 HTTP 接口 |
+| USB OTG 串口 | **占位** | 只有入口，未实现 |
+
+**Wi-Fi 通道的两个坑**：开着 Clash / VPN 的 TUN 模式会吃掉广播包，表现为「一直发现不到设备」；
+Android 上走 UDP 广播必须先 `bindSocket` 绑到 Wi-Fi 网卡（代码里已处理），但同时插着流量卡时
+仍可能被路由到移动网络 —— 关掉流量即可。收不到就先查板子的 Wi-Fi 状态：
+`python tools/send_cmd.py GET_NETWORK_STATUS`。
+
+**BLE 通道**在 Android 12 及以上需要「附近设备」权限，首次使用会弹窗。单包写入超过 MTU 会自动分片
+按序发送。
+
+### 单元测试
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+`ProtocolTest` 的期望值是拿 `_gen_golden.py` 从 `lightstick-player/protocol.py` 生成的真值，
+也就是说 Kotlin 侧的协议实现和 Python 侧**逐字节一致**。改协议两边都要跟着改。
+
+### 还没做的部分
+
+- **音视频同步** —— 计划用 media3/ExoPlayer 当主时钟来驱动灯光时间轴。
+- **设备节拍播放** —— 现在是手机逐条下发，手机一卡顿时序就抖。要让板子自己跑整段序列，
+  需要固件新增一条「下发整段序列」的命令。
+- **编辑页** —— 占位。
+- **USB OTG 串口** —— 只有入口。真要做需要 `usb-serial-for-android` 库，还要处理 OTG 供电、
+  权限弹窗和 CDC 握手。
+
+---
 
 ## 固件
 
@@ -367,6 +462,13 @@ python tests/test_ble_live.py    # 21 项: BLE/串口 真机 + GUI 连接路径 
 python tests/test_gui_smoke.py   # GUI 冒烟 (需要显示环境)
 python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需要 VLC)
                                  # 用的是 examples/testclip.mp4 (ffmpeg 生成的测试片)
+```
+
+Android 端的协议单测（与 `protocol.py` 比对真值）：
+
+```bash
+cd android-player
+./gradlew testDebugUnitTest
 ```
 
 `lightstick-player/tools/` 下还有几个脚本：`bench_cpu.py`（GUI 的 CPU 占用基准，改 UI 前后对比用）、

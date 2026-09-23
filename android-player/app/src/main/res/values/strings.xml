@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lightstick Player</string>
+    <string name="tab_live">Live</string>
+    <string name="tab_sequence">Sequences</string>
+    <string name="tab_edit">Compose</string>
+    <string name="tab_device">Device</string>
+    <string name="kind_usb">USB serial</string>
+    <string name="kind_udp">Wi-Fi UDP</string>
+    <string name="kind_http">Wi-Fi HTTP</string>
+    <string name="kind_ble">Bluetooth LE</string>
+    <string name="conn_section">Connection</string>
+    <string name="conn_address">Address</string>
+    <string name="conn_address_udp">Board IP (blank = auto discover)</string>
+    <string name="conn_address_ble">Device name (blank = default)</string>
+    <string name="conn_address_http">Board IP</string>
+    <string name="conn_address_usb">Port (not implemented yet)</string>
+    <string name="conn_connect">Connect</string>
+    <string name="conn_disconnect">Disconnect</string>
+    <string name="conn_connecting">Connecting…</string>
+    <string name="conn_connected">Connected</string>
+    <string name="conn_disconnected">Not connected</string>
+    <string name="conn_scan">Scan</string>
+    <string name="conn_scanning">Scanning…</string>
+    <string name="conn_scan_none">Nothing found. Check that the board is powered and on the same Wi-Fi.</string>
+    <string name="live_color">Color</string>
+    <string name="live_palette">Palette</string>
+    <string name="live_slots">Slots</string>
+    <string name="live_select_all">All</string>
+    <string name="live_effect">Effect</string>
+    <string name="live_push">Send</string>
+    <string name="live_blackout">BLACKOUT</string>
+    <string name="live_blackout_hint">Turns every channel off immediately</string>
+    <string name="live_advanced">Advanced</string>
+    <string name="live_advanced_hint">RF parameters. Defaults work for the tested stick; change only if you know why.</string>
+    <string name="live_drag_hint">Drag to preview, release to send</string>
+    <string name="eff_solid">Solid</string>
+    <string name="eff_slow">Slow</string>
+    <string name="eff_medium">Medium</string>
+    <string name="eff_fast">Fast</string>
+    <string name="eff_fade_in">Fade in</string>
+    <string name="eff_fade_out">Fade out</string>
+    <string name="seq_section">Sequence</string>
+    <string name="seq_pick">Pick CSV</string>
+    <string name="seq_none">No sequence loaded</string>
+    <string name="seq_play">Play</string>
+    <string name="seq_pause">Pause</string>
+    <string name="seq_stop">Stop</string>
+    <string name="seq_export_hint">CSV format is identical to the PC player, files can be swapped freely.</string>
+    <string name="seq_stat">Sent %1$d / skipped %2$d / interval %3$d ms</string>
+    <string name="dev_section">Device</string>
+    <string name="dev_info">Device info</string>
+    <string name="dev_info_empty">Connect to read device info</string>
+    <string name="dev_firmware">Firmware</string>
+    <string name="dev_chip">Chip</string>
+    <string name="dev_radio">CC1101</string>
+    <string name="dev_memory">Free heap</string>
+    <string name="dev_wifi">Wi-Fi</string>
+    <string name="dev_wifi_config">Wi-Fi setup</string>
+    <string name="dev_ssid">SSID</string>
+    <string name="dev_password">Password</string>
+    <string name="dev_send_wifi">Save &amp; connect</string>
+    <string name="dev_radio_params">RF parameters</string>
+    <string name="dev_terminal">Debug terminal</string>
+    <string name="dev_terminal_hint">Send any JSON command and see the raw reply. Useful for debugging.</string>
+    <string name="dev_send">Send</string>
+    <string name="dev_refresh">Refresh</string>
+    <string name="dev_logs">Logs</string>
+    <string name="dev_clear">Clear</string>
+    <string name="edit_title">Sequence composer</string>
+    <string name="edit_placeholder">Not implemented in this build</string>
+    <string name="edit_help">The composer is deliberately left as an entry point only.
+
+Planned: a timeline editor where you add frames, tweak per-slot colours, adjust timings, duplicate ranges, and export CSV that the PC player and this app can both play.
+
+It is roughly the size of the whole rest of the app, so it is scheduled after the live and sequence screens are solid.</string>
+    <string name="param_mode">Mode</string>
+    <string name="param_burst">D8 burst</string>
+    <string name="param_bit_us">Symbol width (µs)</string>
+    <string name="param_gap_us">Frame gap (µs)</string>
+    <string name="param_repeat">Repeat (c0/zone)</string>
+    <string name="param_freq">Frequency (Hz)</string>
+    <string name="param_power">Power (dBm)</string>
+    <string name="param_throttle">Throttle</string>
+    <string name="param_drop_late">Skip late frames</string>
+    <string name="param_bit_us_hint">Tested floor is 200 µs; below that the stick stops decoding.</string>
+    <string name="mode_d8">D8 · 9 slots RGB</string>
+    <string name="mode_c0">C0 · 10 zones palette</string>
+    <string name="mode_zone">00 · zone mask</string>
+    <string name="common_help">Help</string>
+    <string name="common_close">Close</string>
+    <string name="common_ok">OK</string>
+    <string name="common_cancel">Cancel</string>
+    <string name="err_permission_ble">Bluetooth permission denied. Grant it in system settings.</string>
+    <string name="warn_no_connection">Not connected</string>
+</resources>

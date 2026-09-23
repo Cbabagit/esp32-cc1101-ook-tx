@@ -30,6 +30,17 @@ env/
 *.log
 lightstick-player/.vlc_cache/
 
+# ---- Android (android-player/) ----
+android-player/.gradle/
+android-player/.kotlin/
+android-player/build/
+android-player/app/build/
+android-player/local.properties
+android-player/.idea/
+android-player/dist/
+*.apk
+*.aab
+
 # ---- 编辑器 / 系统 ----
 .vscode/
 .idea/

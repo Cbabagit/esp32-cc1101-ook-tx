@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 一根发光的棒子 + 电波 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M52,30 h4 v44 h-4 z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,22 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,36 q-8,8 0,16" 
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M68,36 q8,8 0,16"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3" />
+    <path
+        android:fillColor="#FF1B90FF"
+        android:pathData="M50,78 h8 v10 h-8 z" />
+</vector>

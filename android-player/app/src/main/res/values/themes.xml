@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 界面本身全部用 Compose 画, 这里只给 Activity 一个无标题栏的壳 -->
+    <style name="Theme.LightstickPlayer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/brand</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

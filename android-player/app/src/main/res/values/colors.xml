@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌主色 #66CCFF 系列 -->
+    <color name="brand">#FF66CCFF</color>
+    <color name="brand_dark">#FF1B90FF</color>
+</resources>

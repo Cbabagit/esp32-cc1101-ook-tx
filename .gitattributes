@@ -1,7 +1,11 @@
 # 统一换行: 仓库里一律 LF, 检出到 Windows 也不改成 CRLF
 * text=auto eol=lf
 
+# Windows 批处理必须保持 CRLF, 否则 cmd.exe 可能解析出错
+*.bat text eol=crlf
+
 # 二进制资源不要做换行/文本处理
+*.jar binary
 *.mp4 binary
 *.bin binary
 *.png binary
