@@ -82,6 +82,10 @@ constexpr uint32_t WIFI_RECOVERY_DELAY_MS = 30000;
 constexpr uint32_t WIFI_RECONNECT_INTERVAL_MS = 10000;
 constexpr uint16_t DISCOVERY_PORT = 4210;
 constexpr char DISCOVERY_REQUEST[] = "LIGHTSTICK_DISCOVER";
+// 同一个 UDP 端口既做发现也收命令: 收到 LIGHTSTICK_DISCOVER 就回设备信息,
+// 收到以 { 开头的就当 JSON 命令跑 (和串口/BLE 走同一套处理)。
+// 单包上限压到 1400, 避免 IP 分片; 超长命令请走串口或 HTTP。
+constexpr size_t UDP_MAX_COMMAND = 1400;
 constexpr char BLE_DEVICE_NAME[] = "Lightstick N16R8";
 constexpr char BLE_SERVICE_UUID[] = "8f7a0001-4c53-4331-9638-53334e313652";
 constexpr char BLE_COMMAND_UUID[] = "8f7a0002-4c53-4331-9638-53334e313652";
@@ -120,6 +124,9 @@ uint32_t wifiReconnectCount = 0;
 bool recoveryApActive = false;
 bool mdnsActive = false;
 bool discoveryActive = false;
+IPAddress udpPeerIp;          // 最近一次 UDP 命令的来源, 异步结果回它
+uint16_t udpPeerPort = 0;
+bool udpPeerActive = false;
 bool wifiWasConnected = false;
 String wifiSsid = WIFI_STA_SSID;
 String wifiPassword = WIFI_STA_PASSWORD;
@@ -202,6 +209,7 @@ TxResultCacheEntry txResultCache[MAX_CACHED_TX_RESULTS];
 size_t txResultCacheCursor = 0;
 
 void sendBleResponse(const String& response);
+void sendUdpResponse(const String& response);
 
 const char* txResultStateName(TxResultState state) {
   switch (state) {
@@ -327,6 +335,7 @@ void respondAsyncError(const String& id, const String& error) {
   String bleResponse;
   serializeJson(response, bleResponse);
   sendBleResponse(bleResponse);
+  sendUdpResponse(bleResponse);
 }
 
 void respondAsyncOk(const String& id, const JsonDocument& result) {
@@ -339,6 +348,7 @@ void respondAsyncOk(const String& id, const JsonDocument& result) {
   String bleResponse;
   serializeJson(response, bleResponse);
   sendBleResponse(bleResponse);
+  sendUdpResponse(bleResponse);
 }
 
 void respondError(const String& id, const String& error) {
@@ -2662,6 +2672,17 @@ void sendBleResponse(const String& response) {
   }
 }
 
+// 异步结果 (TX_COMPLETE) 回给最近发过 UDP 命令的那一端。UDP 是无连接的,
+// 只能记最近一次来源; 同时用多个客户端时才需要改成分连接管理。
+void sendUdpResponse(const String& response) {
+  if (!udpPeerActive || !discoveryActive || udpPeerPort == 0) return;
+  String framed = response;
+  framed += (char)10;
+  discoveryUdp.beginPacket(udpPeerIp, udpPeerPort);
+  discoveryUdp.write(reinterpret_cast<const uint8_t*>(framed.c_str()), framed.length());
+  discoveryUdp.endPacket();
+}
+
 class LightstickBleServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer*) override {
     bleConnected = true;
@@ -2795,32 +2816,69 @@ void serviceWifi() {
   wifiWasConnected = connected;
 }
 
+void sendUdpDatagram(const IPAddress& ip, uint16_t port, const String& payload) {
+  discoveryUdp.beginPacket(ip, port);
+  discoveryUdp.write(reinterpret_cast<const uint8_t*>(payload.c_str()), payload.length());
+  discoveryUdp.endPacket();
+}
+
+// 同一个端口处理两件事:
+//   1) LIGHTSTICK_DISCOVER -> 回设备信息 (原有行为, 未改动)
+//   2) 以 { 开头的 JSON   -> 当成命令跑, 同步结果回给发送方,
+//      之后的 TX_COMPLETE 等异步事件由 sendUdpResponse() 回到同一端。
 void serviceDiscovery() {
   if (!discoveryActive) return;
+  static char packet[UDP_MAX_COMMAND + 1];
   int packetSize = 0;
   while ((packetSize = discoveryUdp.parsePacket()) > 0) {
-    char request[96]{};
-    const int bytesRead = discoveryUdp.read(request, min(packetSize, static_cast<int>(sizeof(request) - 1)));
+    const IPAddress remoteIp = discoveryUdp.remoteIP();
+    const uint16_t remotePort = discoveryUdp.remotePort();
+    const bool oversized = packetSize > static_cast<int>(UDP_MAX_COMMAND);
+    const int bytesRead = discoveryUdp.read(
+      packet, min(packetSize, static_cast<int>(sizeof(packet) - 1)));
     if (bytesRead <= 0) continue;
-    request[bytesRead] = '\0';
-    String message(request);
+    packet[bytesRead] = '\0';
+    String message(packet);
     message.trim();
-    if (message != DISCOVERY_REQUEST) continue;
+    if (message.isEmpty()) continue;
 
-    JsonDocument response;
-    response["device"] = "Lightstick-N16R8";
-    response["firmware_version"] = FIRMWARE_VERSION;
-    response["boot_id"] = bootId;
-    response["ip"] = WiFi.localIP().toString();
-    response["hostname"] = WIFI_HOSTNAME;
-    response["mdns"] = String(WIFI_HOSTNAME) + ".local";
-    response["http_port"] = 80;
-    response["api_path"] = "/api/command";
-    String json;
-    serializeJson(response, json);
-    discoveryUdp.beginPacket(discoveryUdp.remoteIP(), discoveryUdp.remotePort());
-    discoveryUdp.write(reinterpret_cast<const uint8_t*>(json.c_str()), json.length());
-    discoveryUdp.endPacket();
+    if (message == DISCOVERY_REQUEST) {
+      JsonDocument response;
+      response["device"] = "Lightstick-N16R8";
+      response["firmware_version"] = FIRMWARE_VERSION;
+      response["boot_id"] = bootId;
+      response["ip"] = WiFi.localIP().toString();
+      response["hostname"] = WIFI_HOSTNAME;
+      response["mdns"] = String(WIFI_HOSTNAME) + ".local";
+      response["http_port"] = 80;
+      response["api_path"] = "/api/command";
+      response["udp_command"] = true;
+      String json;
+      serializeJson(response, json);
+      sendUdpDatagram(remoteIp, remotePort, json);
+      continue;
+    }
+
+    if (message[0] != '{') continue;
+
+    // 记下来源, 异步事件回这里
+    udpPeerIp = remoteIp;
+    udpPeerPort = remotePort;
+    udpPeerActive = true;
+
+    if (oversized) {
+      sendUdpDatagram(remoteIp, remotePort,
+        String("{\"ok\":false,\"error\":\"udp command exceeds ")
+          + String(static_cast<unsigned>(UDP_MAX_COMMAND))
+          + " bytes; use serial or HTTP for long payloads\"}" + (char)10);
+      continue;
+    }
+
+    const String reply = runCommandForReply(message);
+    if (reply.isEmpty()) continue;
+    String framed = reply;
+    framed += (char)10;
+    sendUdpDatagram(remoteIp, remotePort, framed);
   }
 }
 

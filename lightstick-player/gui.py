@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -114,11 +115,19 @@ class LightstickPlayerApp:
 
         row3 = ttk.Frame(top)
         row3.pack(fill="x", **pad)
+        ttk.Label(row3, text="连接:").pack(side="left")
+        self.transport_var = tk.StringVar(value="USB 串口")
+        ttk.Combobox(row3, textvariable=self.transport_var,
+                     values=("USB 串口", "WiFi UDP", "BLE 蓝牙"),
+                     width=10, state="readonly").pack(side="left", padx=4)
         ttk.Label(row3, text="串口:").pack(side="left")
         self.port_var = tk.StringVar()
-        self.port_cb = ttk.Combobox(row3, textvariable=self.port_var, width=16)
+        self.port_cb = ttk.Combobox(row3, textvariable=self.port_var, width=12)
         self.port_cb.pack(side="left", padx=4)
-        ttk.Button(row3, text="刷新", command=self.refresh_ports).pack(side="left")
+        ttk.Label(row3, text="地址:").pack(side="left")
+        self.addr_var = tk.StringVar()
+        ttk.Entry(row3, textvariable=self.addr_var, width=18).pack(side="left", padx=4)
+        ttk.Button(row3, text="扫描", command=self.scan_devices).pack(side="left")
         self.connect_btn = ttk.Button(row3, text="连接", command=self.toggle_connect)
         self.connect_btn.pack(side="left", padx=4)
         self.conn_state = ttk.Label(row3, text="未连接")
@@ -277,24 +286,98 @@ class LightstickPlayerApp:
         if ports and not self.port_var.get():
             self.port_var.set(ports[0])
 
+    def _transport_spec(self):
+        """把界面上的三项合成 open_transport() 能吃的描述串。"""
+        kind = self.transport_var.get()
+        addr = self.addr_var.get().strip()
+        if kind == "WiFi UDP":
+            return "udp:" + addr if addr else "udp"
+        if kind == "BLE 蓝牙":
+            return "ble:" + addr if addr else "ble"
+        return "usb:" + self.port_var.get().strip()
+
+    def scan_devices(self):
+        """扫描: 串口 / UDP 广播发现 / BLE。结果填进对应输入框。"""
+        kind = self.transport_var.get()
+        self._log(f"扫描 {kind} ...")
+        if kind == "USB 串口":
+            self.refresh_ports()
+            self._log("串口: " + (", ".join(transport_mod.list_ports()) or "无"))
+            return
+        if kind == "WiFi UDP":
+            info = transport_mod.discover(timeout=2.0)
+            if info:
+                self.addr_var.set(info.get("ip", ""))
+                self._log(f"发现 {info.get('device')} @ {info.get('ip')}"
+                          f" (fw {info.get('firmware_version')})")
+            else:
+                self._log("UDP 没收到回应: 板子可能没连上同一个 Wi-Fi")
+            return
+        # BLE: 扫描要跑事件循环, 放到后台线程免得卡住界面
+        self._log("BLE 扫描中 (约 6 秒)...")
+
+        def worker():
+            try:
+                import asyncio
+                from bleak import BleakScanner
+                found = asyncio.run(BleakScanner.discover(timeout=6.0))
+                hits = [d for d in found
+                        if (getattr(d, "name", None) or "").lower().startswith("lightstick")]
+                if hits:
+                    device = hits[0]
+                    self.root.after(0, lambda: self.addr_var.set(device.name or ""))
+                    self._log(f"发现 BLE: {device.name} ({device.address})")
+                else:
+                    self._log(f"没扫到 Lightstick*, 共 {len(found)} 个 BLE 设备")
+            except Exception as exc:
+                self._log(f"BLE 扫描失败: {exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def toggle_connect(self):
         if self.tx is not None:
-            self.tx.close()
+            try:
+                self.tx.close()
+            except Exception:
+                pass
             self.tx = None
             self.connect_btn.config(text="连接")
             self.conn_state.config(text="未连接")
             return
-        port = self.port_var.get().strip()
-        if not port:
-            messagebox.showwarning("lightstick-player", "请选择串口")
+        spec = self._transport_spec()
+        if spec.endswith(":"):
+            messagebox.showwarning("lightstick-player", "请先选择串口或填地址")
             return
-        try:
-            self.tx = transport_mod.LightstickTransport(port, 921600, log=self._log)
-            self.connect_btn.config(text="断开")
-            self.conn_state.config(text=f"已连接 {port}")
-            self._log(f"串口已连接: {port}")
-        except Exception as e:
-            messagebox.showerror("lightstick-player", f"串口打开失败: {e}")
+
+        self._log(f"连接 {spec} ...")
+        # UDP 发现最长等 1.5s, BLE 扫描+连接可能十几秒, 别卡住 Tk 主线程
+        if spec.startswith("usb:"):
+            self._finish_connect(spec, None)
+            return
+        self.connect_btn.config(state="disabled", text="连接中...")
+
+        def worker():
+            try:
+                tx = transport_mod.open_transport(spec, log=self._log)
+                self.root.after(0, lambda: self._finish_connect(spec, tx))
+            except Exception as exc:
+                self.root.after(0, lambda: self._finish_connect(spec, None, exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_connect(self, spec, tx, error=None):
+        self.connect_btn.config(state="normal")
+        if error is not None or tx is None:
+            self.connect_btn.config(text="连接")
+            self.conn_state.config(text="未连接")
+            if error is not None:
+                self._log(f"连接失败: {error}")
+                messagebox.showerror("lightstick-player", f"连接失败:\n{error}")
+            return
+        self.tx = tx
+        self.connect_btn.config(text="断开")
+        self.conn_state.config(text="已连接 " + tx.describe())
+        self._log("已连接: " + tx.describe())
 
     # ---------------- 播放控制 ----------------
     def _params(self):

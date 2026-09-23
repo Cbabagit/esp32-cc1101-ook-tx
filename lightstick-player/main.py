@@ -125,6 +125,91 @@ def build_sender(tx, mode: str, warn_on_extra: bool, freq: int, power: int, burs
     return send
 
 
+def _reply_logger(prefix="设备"):
+    def on_reply(reply):
+        status = reply.get("status") or ("ok" if reply.get("ok") else "?")
+        if reply.get("error"):
+            print(f"[{prefix}] 错误: {reply.get('error')}")
+        elif reply.get("event"):
+            print(f"[{prefix}] {reply.get('event')}: {status}")
+        elif reply.get("result"):
+            print(f"[{prefix}] {reply.get('id', '')} {status}")
+    return on_reply
+
+
+def list_devices(args):
+    """打印能找到的板子: 串口 / UDP 广播 / BLE 扫描。"""
+    print("串口:")
+    ports = transport.list_ports()
+    for port in ports:
+        print(f"  usb:{port}")
+    if not ports:
+        print("  (无)")
+
+    print(f"Wi-Fi UDP (广播 {transport.UDP_DISCOVERY_PORT}):")
+    info = transport.discover(timeout=2.0)
+    if info:
+        print(f"  udp:{info.get('ip')}  {info.get('device')}  fw={info.get('firmware_version')}"
+              f"  host={info.get('hostname')}")
+    else:
+        print("  (没回应; 板子可能没连上同一个 Wi-Fi)")
+
+    print("BLE:")
+    try:
+        import asyncio
+        from bleak import BleakScanner
+        found = asyncio.run(BleakScanner.discover(timeout=6.0))
+        hits = [d for d in found
+                if (getattr(d, "name", None) or "").lower().startswith("lightstick")]
+        for device in hits:
+            print(f"  ble:{device.name}  ({device.address})")
+        if not hits:
+            print(f"  (没扫到 Lightstick*, 共扫到 {len(found)} 个设备)")
+    except Exception as exc:
+        print(f"  (BLE 扫描失败: {exc})")
+    return 0
+
+
+def connect_transport(args):
+    """按 --transport 建立传输, 返回 (tx, error)。"""
+    if args.dry_run or args.transport == "dry":
+        return transport.DryRunTransport(), None
+
+    on_reply = _reply_logger()
+    attempts = []
+    if args.transport == "auto":
+        if args.port:
+            attempts.append("usb:" + args.port)
+        elif args.host:
+            attempts.append("udp:" + args.host)
+        else:
+            # 没给任何地址: 先试广播发现, 再试 BLE (BLE 不需要知道地址)
+            attempts += ["udp", "ble"]
+    elif args.transport == "usb":
+        if not args.port:
+            return None, "usb 传输需要 --port (如 --port COM10)"
+        attempts.append("usb:" + args.port)
+    elif args.transport == "udp":
+        attempts.append("udp:" + args.host if args.host else "udp")
+    elif args.transport == "ble":
+        attempts.append("ble:" + args.ble_name if args.ble_name else "ble")
+    else:
+        return None, f"未知的 --transport: {args.transport}"
+
+    problems = []
+    for spec in attempts:
+        try:
+            return transport.open_transport(spec, log=print, on_reply=on_reply,
+                                            baud=args.baud), None
+        except Exception as exc:
+            problems.append(f"  {spec}: {exc}")
+    hint = ""
+    if args.transport == "auto":
+        hint = (chr(10) + "提示: 用 --transport 指定 usb / udp / ble, "
+                "或用 --list-devices 看看板子在哪。")
+    return None, "连不上板子:" + chr(10) + chr(10).join(problems) + hint
+
+
 def run(args):
     frames = csv_loader.load_csv(args.csv)
     nch = len(frames[0].channels) if frames else 0
@@ -142,13 +227,11 @@ def run(args):
         print(f"视频: {info}")
         return 0
 
-    if args.dry_run:
-        tx = transport.DryRunTransport()
-    else:
-        if not args.port:
-            print("需要 --port 或 --dry-run")
-            return 1
-        tx = transport.LightstickTransport(args.port, args.baud)
+    tx, error = connect_transport(args)
+    if tx is None:
+        print(error)
+        return 1
+    print(f"已连接: {tx.describe()}")
 
     sender = build_sender(tx, args.mode, warn_on_extra=not args.quiet,
                           freq=args.frequency, power=args.power, burst=args.burst,
@@ -218,7 +301,14 @@ def run(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="lightstick-player CSV 播放上位机")
     ap.add_argument("csv", nargs="?", help="CSV 序列文件")
-    ap.add_argument("--port", help="串口(如 COM10)")
+    ap.add_argument("--transport", choices=("auto", "usb", "udp", "ble", "dry"),
+                    default="auto",
+                    help="连接方式: usb 串口 / udp Wi-Fi / ble 蓝牙 / dry 空跑 (默认 auto)")
+    ap.add_argument("--port", help="串口(如 COM10); 等价于 --transport usb")
+    ap.add_argument("--host", help="Wi-Fi UDP 目标 IP; 留空则广播自动发现")
+    ap.add_argument("--ble-name", help="BLE 设备名 (默认 Lightstick N16R8)")
+    ap.add_argument("--list-devices", action="store_true",
+                    help="列出串口 / UDP 发现的板子 / BLE 设备后退出")
     ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--video", help="同步播放的视频文件")
     ap.add_argument("--probe", action="store_true", help="仅探测视频信息后退出")
@@ -250,6 +340,8 @@ def main(argv=None):
         for p in transport.list_ports():
             print(p)
         return 0
+    if args.list_devices:
+        return list_devices(args)
     if not args.csv:
         ap.print_help()
         return 1

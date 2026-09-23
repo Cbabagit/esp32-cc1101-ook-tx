@@ -92,6 +92,61 @@ python main.py show.csv --port COM10 --mode c0 --drop-late
 | `--repeat N` | 1 | c0/zone 每帧重复次数 |
 | `--drop-late` | 关 | 跟不上的帧直接跳过（保持与视频同步），而不是排队等待 |
 | `--legacy` | 关 | 改走 TX_PULSES + durations_us（慢，仅用于对照） |
+| `--transport {auto,usb,udp,ble}` | auto | 连接方式，见下一节 |
+| `--host IP` | 空 | UDP 目标，留空则广播发现 |
+| `--ble-name 名字` | 空 | BLE 设备名，留空用默认名 |
+
+### 连接方式（串口 / Wi-Fi UDP / BLE）
+
+板子三种接口收的都是同一套换行分隔的 JSON，播放器三种传输都支持：
+
+| 传输 | 参数 | 说明 |
+| --- | --- | --- |
+| USB 串口 | `--transport usb --port COM10` | 最稳，要插线 |
+| Wi-Fi UDP | `--transport udp` | 广播自动发现；也可 `--host 192.168.1.50` 直接指定 |
+| BLE 蓝牙 | `--transport ble` | 免插线免配网，带宽较低 |
+
+不指定 `--transport` 时按 auto 顺序试：给了 `--port` 走串口，给了 `--host` 走 UDP，
+什么都没给就先 UDP 广播发现、失败再试 BLE。
+
+先看看板子在哪：
+
+```bash
+python main.py --list-devices
+```
+
+```text
+串口:
+  usb:COM10
+Wi-Fi UDP (广播 4210):
+  udp:192.168.1.57  Lightstick-N16R8  fw=0.5.2  host=lightstick-n16r8
+BLE:
+  ble:Lightstick N16R8  (28:84:85:89:71:81)
+```
+
+也可以用 `tools/send_cmd.py` 单独发一条命令（三种传输通用）：
+
+```bash
+python tools/send_cmd.py GET_INFO --transport ble
+python tools/send_cmd.py GET_STATUS --transport udp
+```
+
+#### 三种传输怎么选
+
+| | 延迟 | 长命令 | 需要配网 |
+| --- | --- | --- | --- |
+| 串口 | 低 | 可以（`--legacy` 的 8KB 也扛得住） | 不需要 |
+| UDP | 最低 | 单包 ≤ 1400 字节 | 需要板子先连上同一个 Wi-Fi |
+| BLE | 中 | 建议 ≤ 几百字节 | 不需要 |
+
+- **UDP**：一条命令一个数据包，不可靠、丢了不重传 —— 但灯光命令本来就是只认最新一帧，
+  丢一包下一帧就盖过去了，所以 UDP 反而最合适。
+- **BLE**：适合临时用，不用知道 IP 也不用配网。响应用通知回传，按 180 字节分片。
+- **串口**：最稳，也是唯一能稳稳跑 `--legacy` 长命令的路径。
+
+> Wi-Fi UDP 是在板子的**同一个端口 4210** 上同时做发现和收命令的：收到 `LIGHTSTICK_DISCOVER`
+> 就回设备信息，收到以 `{` 开头的数据包就当 JSON 命令跑。
+> 找不到板子先查它的 Wi-Fi 状态：`python tools/send_cmd.py GET_NETWORK_STATUS`。
 
 ### 图形界面
 
@@ -307,6 +362,8 @@ pio device monitor -b 921600             # 可选: 看串口输出
 ```bash
 cd lightstick-player
 python tests/test_core.py        # 108 项: CSV / 协议帧构造 / 空口编码 / 时间轴 / 紧凑命令层
+python tests/test_transport.py   # 12 项: UDP 发现/发送/合帧/限长 (本地假板子, 不需要硬件)
+python tests/test_ble_live.py    # 11 项: BLE 真机 (板子不在会自动跳过)
 python tests/test_gui_smoke.py   # GUI 冒烟 (需要显示环境)
 python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需要 VLC)
                                  # 用的是 examples/testclip.mp4 (ffmpeg 生成的测试片)
