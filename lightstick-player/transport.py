@@ -36,6 +36,7 @@ import time
 from typing import Callable, List, Optional
 
 _NL = chr(10)
+_NL_BYTES = b"\n"
 
 # 固件里写死的常量, 改固件时这里要同步 (firmware/src/main.cpp 顶部)
 UDP_DISCOVERY_PORT = 4210
@@ -101,16 +102,19 @@ class SerialTransport(Transport):
 
     kind = "usb"
 
-    def __init__(self, port: str, baud: int = 921600, log=None):
+    def __init__(self, port: str, baud: int = 921600, log=None, on_reply=None):
         import serial
         self._log = log or (lambda s: None)
+        self.on_reply = on_reply
         self.port = port
         self.baud = baud
-        # write_timeout=2: 串口写阻塞超过 2 秒就抛异常, 不会无限卡死
-        self.ser = serial.Serial(port, baud, timeout=0.2, write_timeout=2)
+        # 非阻塞读: 后台线程要同时跑写和读, 不能让 read 把写卡住。
+        # write_timeout=2: 串口写阻塞超过 2 秒就抛异常, 不会无限卡死。
+        self.ser = serial.Serial(port, baud, timeout=0, write_timeout=2)
         self.ser.reset_input_buffer()
 
         self._latest: Optional[str] = None
+        self._pending = b""        # 没收完一行的字节先存着
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
@@ -130,14 +134,45 @@ class SerialTransport(Transport):
             with self._lock:
                 line = self._latest
                 self._latest = None
-            if line is None:
-                time.sleep(0.01)
-                continue
+            if line is not None:
+                try:
+                    self.ser.write((line + _NL).encode("ascii"))
+                except Exception as exc:
+                    # 写失败(串口忙/超时/已拔出): 打印到 stderr, 不打断线程
+                    print("[transport] write error: %s" % exc, file=sys.stderr)
+            self._read_available()
+            time.sleep(0.005)
+
+    def _read_available(self) -> None:
+        """把串口里的回包读掉并回调 on_reply。
+
+        以前这里完全不读: 于是 send_cmd.py 走串口永远收不到响应; 而且板子的
+        日志一旦把 UART 发送缓冲填满, 固件里的 Serial.flush() 会跟着卡住。
+        """
+        try:
+            waiting = self.ser.in_waiting
+        except Exception:
+            return
+        if not waiting:
+            return
+        try:
+            chunk = self.ser.read(waiting)
+        except Exception:
+            return
+        if not chunk:
+            return
+        self._pending += chunk
+        while _NL_BYTES in self._pending:
+            raw, self._pending = self._pending.split(_NL_BYTES, 1)
+            text = raw.decode("utf-8", "replace").strip()
+            if not text or not text.startswith("{"):
+                continue        # 板子的日志(rmt/panic 之类)不是 JSON, 跳过
             try:
-                self.ser.write((line + _NL).encode("ascii"))
-            except Exception as exc:
-                # 写失败(串口忙/超时/已拔出): 打印到 stderr, 不打断线程
-                print("[transport] write error: %s" % exc, file=sys.stderr)
+                reply = json.loads(text)
+            except ValueError:
+                continue
+            if self.on_reply is not None:
+                self.on_reply(reply)
 
     def close(self) -> None:
         self._stop.set()
@@ -539,9 +574,11 @@ def open_transport(spec: str, log=None, on_reply=None, on_state=None,
                             on_state=on_state)
 
     if lowered.startswith("serial:"):
-        return SerialTransport(spec.split(":", 1)[1], baud, log=log)
+        return SerialTransport(spec.split(":", 1)[1], baud, log=log,
+                               on_reply=on_reply)
 
     if lowered.startswith("usb:"):
-        return SerialTransport(spec.split(":", 1)[1], baud, log=log)
+        return SerialTransport(spec.split(":", 1)[1], baud, log=log,
+                               on_reply=on_reply)
 
-    return SerialTransport(spec, baud, log=log)
+    return SerialTransport(spec, baud, log=log, on_reply=on_reply)
