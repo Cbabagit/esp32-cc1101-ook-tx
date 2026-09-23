@@ -147,7 +147,36 @@ def main():
     lines = [l for l in buffer.getvalue().splitlines() if l.strip()]
     check(len(lines) == 2, "重复错误被去重 (50 次 -> %d 行)" % len(lines))
 
-    # ---- 7) 工厂描述串 ----
+    # ---- 7) 工厂的参数契约 (曾经漏过 on_state, GUI 一连 BLE 就 TypeError) ----
+    import inspect
+    params = inspect.signature(transport.open_transport).parameters
+    for name in ("log", "on_reply", "on_state", "baud"):
+        check(name in params, "open_transport 接受 %s" % name)
+
+    captured = {}
+
+    class FakeBle:
+        def __init__(self, **kwargs):
+            captured.clear()
+            captured.update(kwargs)
+
+    real_ble = transport.BleTransport
+    transport.BleTransport = FakeBle
+    try:
+        marker = lambda *a: None            # noqa: E731
+        transport.open_transport("ble", log=print, on_reply=None, on_state=marker)
+        check(captured.get("on_state") is marker, "on_state 透传到 BleTransport")
+        check(captured.get("name") is None, "不写名字时 name=None (用固件默认名)")
+
+        transport.open_transport("ble:MyStick", on_state=marker)
+        check(captured.get("name") == "MyStick", "ble:名字 透传 name")
+
+        transport.open_transport("ble-addr:AA:BB:CC:DD:EE:FF")
+        check(captured.get("address") == "AA:BB:CC:DD:EE:FF", "ble-addr: 透传 address")
+    finally:
+        transport.BleTransport = real_ble
+
+    # ---- 8) 工厂描述串 ----
     dry = transport.open_transport("dry")
     check(dry.kind == "dry", "open_transport('dry') 返回 DryRunTransport")
     check(transport.LightstickTransport is transport.SerialTransport,

@@ -362,8 +362,8 @@ pio device monitor -b 921600             # 可选: 看串口输出
 ```bash
 cd lightstick-player
 python tests/test_core.py        # 108 项: CSV / 协议帧构造 / 空口编码 / 时间轴 / 紧凑命令层
-python tests/test_transport.py   # 14 项: UDP 发现/发送/合帧/限长/错误处理 (本地假板子, 不需要硬件)
-python tests/test_ble_live.py    # 11 项: BLE 真机 (板子不在会自动跳过)
+python tests/test_transport.py   # 22 项: UDP 发现/发送/合帧/限长/错误处理/工厂契约 (不需要硬件)
+python tests/test_ble_live.py    # 16 项: BLE 真机 + GUI 连接路径 (板子不在会自动跳过)
 python tests/test_gui_smoke.py   # GUI 冒烟 (需要显示环境)
 python tests/test_fullscreen.py  # 真起 VLC 验证 嵌入<->全屏 切换 (需要 VLC)
                                  # 用的是 examples/testclip.mp4 (ffmpeg 生成的测试片)

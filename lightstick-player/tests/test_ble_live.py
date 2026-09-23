@@ -30,6 +30,61 @@ def check(cond, msg):
         print("  FAIL " + msg)
 
 
+def gui_check():
+    """按 GUI 的方式连接一次 BLE (弹窗改成记录, 不阻塞)。"""
+    import tkinter as tk
+    import gui as gui_mod
+
+    popups = []
+
+    class FakeBox:
+        def showerror(self, *args, **kwargs):
+            popups.append(args)
+
+        def showwarning(self, *args, **kwargs):
+            popups.append(args)
+
+        def showinfo(self, *args, **kwargs):
+            popups.append(args)
+
+    real_messagebox = gui_mod.messagebox
+    gui_mod.messagebox = FakeBox()
+    root = tk.Tk()
+    root.withdraw()
+    app = gui_mod.LightstickPlayerApp(root)
+    try:
+        app.transport_var.set("BLE 蓝牙")
+        spec = app._transport_spec()
+        check(spec.startswith("ble"), "界面能拼出 ble 描述串: %s" % spec)
+
+        app.toggle_connect()
+        deadline = time.time() + 35.0
+        while time.time() < deadline and app.tx is None and not popups:
+            root.update()
+            time.sleep(0.05)
+
+        check(not popups, "GUI 连接没弹错误框: %s" % (popups[:1],))
+        check(app.tx is not None and app.tx.kind == "ble",
+              "GUI 连上了 BLE (tx=%s)" % (app.tx.describe() if app.tx else None))
+
+        if app.tx is not None:
+            app.toggle_connect()
+            root.update()
+            check(app.tx is None, "GUI 能正常断开")
+            check(app.connect_btn.cget("text") == "连接", "断开后按钮回到「连接」")
+    finally:
+        gui_mod.messagebox = real_messagebox
+        try:
+            if app.tx is not None:
+                app.tx.close()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default=None)
@@ -88,6 +143,12 @@ def main():
               % (status, error))
 
     tx.close()
+
+    # ---- 3) GUI 的连接路径也要走一遍 ----
+    # 这里曾经漏传 on_state 给工厂, 一连 BLE 就 TypeError。
+    # 光测 transport 层发现不了, 必须真的走 GUI 那条路。
+    gui_check()
+
     print()
     print("%d passed, %d failed" % (PASS, FAIL))
     return 1 if FAIL else 0

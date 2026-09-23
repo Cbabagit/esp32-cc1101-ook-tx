@@ -501,8 +501,8 @@ class DryRunTransport(Transport):
 # ---------------------------------------------------------------------------
 # 工厂
 # ---------------------------------------------------------------------------
-def open_transport(spec: str, log=None, on_reply=None, baud: int = 921600,
-                   timeout: float = 20.0) -> Transport:
+def open_transport(spec: str, log=None, on_reply=None, on_state=None,
+                   baud: int = 921600, timeout: float = 20.0) -> Transport:
     """按描述串建立传输。
 
     spec 形如:
@@ -514,6 +514,10 @@ def open_transport(spec: str, log=None, on_reply=None, baud: int = 921600,
     - "ble:Lightstick N16R8"                  -> BLE, 按名字扫描
     - "ble-addr:AA:BB:CC:DD:EE:FF"            -> BLE, 直接按地址连
     - "dry"                                   -> 干跑
+
+    on_reply: 收到设备响应时回调 (可选)
+    on_state: 链路状态变化时回调 on_state(connected: bool, label: str) (可选,
+              目前只有 BLE 会主动报断开)
     """
     spec = (spec or "").strip()
     lowered = spec.lower()
@@ -526,11 +530,13 @@ def open_transport(spec: str, log=None, on_reply=None, baud: int = 921600,
         return UdpTransport(host=host or None, log=log, on_reply=on_reply)
 
     if lowered.startswith("ble-addr:"):
-        return BleTransport(address=spec.split(":", 1)[1], log=log, on_reply=on_reply)
+        return BleTransport(address=spec.split(":", 1)[1], log=log, on_reply=on_reply,
+                            on_state=on_state)
 
     if lowered.startswith("ble"):
         name = spec.split(":", 1)[1] if ":" in spec else None
-        return BleTransport(name=name or None, log=log, on_reply=on_reply)
+        return BleTransport(name=name or None, log=log, on_reply=on_reply,
+                            on_state=on_state)
 
     if lowered.startswith("serial:"):
         return SerialTransport(spec.split(":", 1)[1], baud, log=log)

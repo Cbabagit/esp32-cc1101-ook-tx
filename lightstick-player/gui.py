@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -65,6 +67,7 @@ class LightstickPlayerApp:
         root.title("lightstick-player")
         root.geometry("1040x760")
 
+        self._ui_queue = queue.Queue()   # 后台线程 -> 主线程的界面更新
         self.frames = []
         self.video_path = None
         self.tx = None
@@ -253,7 +256,39 @@ class LightstickPlayerApp:
     # ---------------- 日志 ----------------
     LOG_MAX_LINES = 500
 
+    # Tk 只能在主线程碰: 后台线程直接调 self.log / root.after 会抛
+    # "main thread is not in main loop"。所有跨线程的界面更新都走这个队列,
+    # 由主线程的 _tick 取出来执行。
+    def _post(self, func):
+        self._ui_queue.put(("call", func))
+
+    def _drain_ui_queue(self):
+        while True:
+            try:
+                kind, payload = self._ui_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if kind == "log":
+                    self._log_now(payload)
+                else:
+                    payload()
+            except Exception as exc:
+                print("[gui] 界面回调失败: %s" % exc, file=sys.stderr)
+
     def _log(self, msg: str):
+        """任何线程都能调: 不在主线程就入队, 让主线程去写控件。"""
+        if threading.current_thread() is threading.main_thread():
+            self._log_now(msg)
+        else:
+            self._ui_queue.put(("log", msg))
+
+    def _log_now(self, msg: str):
+        widget = getattr(self, "log", None)
+        if widget is None:
+            # 界面还没建好(构造过程中), 先打到 stdout
+            print(msg)
+            return
         # 原先每条日志都查一次 Text 控件的行号(index 是一次 Tk 调用), 播放时
         # 每秒几十条, 纯属浪费。行数自己数就行。
         self._log_lines += msg.count("\n") + 1
@@ -366,7 +401,7 @@ class LightstickPlayerApp:
                         if (getattr(d, "name", None) or "").lower().startswith("lightstick")]
                 if hits:
                     device = hits[0]
-                    self.root.after(0, lambda: self.addr_var.set(device.name or ""))
+                    self._post(lambda: self.addr_var.set(device.name or ""))
                     self._log(f"发现 BLE: {device.name} ({device.address})")
                 else:
                     self._log(f"没扫到 Lightstick*, 共 {len(found)} 个 BLE 设备")
@@ -400,7 +435,8 @@ class LightstickPlayerApp:
         holder = {}
 
         def on_state(connected, label):
-            self.root.after(0, lambda: self._on_transport_state(
+            # 这个回调来自 bleak 的线程, 不能直接碰 Tk
+            self._post(lambda: self._on_transport_state(
                 holder.get("tx"), connected, label))
 
         def worker():
@@ -408,9 +444,9 @@ class LightstickPlayerApp:
                 tx = transport_mod.open_transport(spec, log=self._log,
                                                   on_state=on_state)
                 holder["tx"] = tx
-                self.root.after(0, lambda: self._finish_connect(spec, tx))
+                self._post(lambda: self._finish_connect(spec, tx))
             except Exception as exc:
-                self.root.after(0, lambda: self._finish_connect(spec, None, exc))
+                self._post(lambda: self._finish_connect(spec, None, exc))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -710,6 +746,7 @@ class LightstickPlayerApp:
     TICK_IDLE_MS = 150      # 空闲: 没必要 200Hz 空转
 
     def _tick(self):
+        self._drain_ui_queue()
         interval = self.TICK_IDLE_MS
         if self.tl is not None and self.state in ("playing", "paused"):
             interval = self.TICK_ACTIVE_MS
