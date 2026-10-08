@@ -110,6 +110,9 @@ def run_cli(argv) -> int:
 def main() -> int:
     _make_stdout_safe()
     argv = list(sys.argv[1:])
+    if len(argv) == 2 and argv[0] == "--midi-ui-check":
+        from midi_ui_check import run
+        return run(argv[1])
     if argv and argv[0] == "--selftest":
         return run_selftest()
     if argv and argv[0] == "--gui":

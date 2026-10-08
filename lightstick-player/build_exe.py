@@ -4,18 +4,19 @@
 
 默认打两个:
 
-    dist/lightstick-player.exe       图形界面版 (无控制台, 双击即用)
-    dist/lightstick-player-cli.exe   命令行版 (带控制台, --list-ports / 播放等)
+    dist/lightstick-player/lightstick-player.exe       图形界面版 (无控制台, 双击即用)
+    dist/lightstick-player-cli/lightstick-player-cli.exe   命令行版 (带控制台, --list-ports / 播放等)
 
 为什么是两个: --windowed 的进程没有 stdout, 命令行模式会变成"哑巴";
 --console 的进程双击时会多一个黑框。分开打各自都正常。
 
 用法:
 
-    py build_exe.py                # 两个都打 (默认, 单文件)
+    py build_exe.py                # 两个都打 (默认, 文件夹版)
     py build_exe.py --gui-only     # 只打图形界面版
     py build_exe.py --cli-only     # 只打命令行版
-    py build_exe.py --onedir       # 单目录模式 (启动快很多, 但要整个文件夹)
+    py build_exe.py --onedir       # 文件夹版 (默认；保留完整文件夹)
+    py build_exe.py --onefile      # 可选单文件版，启动需要可写临时目录
     py build_exe.py --clean        # 先清掉 build/dist
 
 注意: 视频同步需要目标机器装有 VLC (libVLC)。不装也能用, 只是没有视频功能。
@@ -43,6 +44,13 @@ HIDDEN_IMPORTS = [
 ]
 
 
+def safe_remove(path, base):
+    target, root = os.path.realpath(path), os.path.realpath(base)
+    if target == root or os.path.commonpath([target, root]) != root:
+        raise ValueError('Refusing to remove path outside build directory: ' + target)
+    shutil.rmtree(target, ignore_errors=True)
+
+
 def prepare_tcl_tk(staging_root: str):
     """准备 Tcl/Tk 脚本库, 返回 [(源目录, 打包目标名), ...]。
 
@@ -54,7 +62,7 @@ def prepare_tcl_tk(staging_root: str):
     import glob
     import zipfile
 
-    tcl_root = os.path.join(os.path.dirname(sys.executable), "tcl")
+    tcl_root = os.path.join(sys.base_prefix, "tcl")
     specs = [
         ("libtcl*.zip", "tcl_library", "tcl", "_tcl_data"),
         ("libtk*.zip", "tk_library", "tk", "_tk_data"),
@@ -66,16 +74,16 @@ def prepare_tcl_tk(staging_root: str):
             print("!! 找不到 %s (在 %s 下)" % (pattern, tcl_root), flush=True)
             continue
         target = os.path.join(staging_root, folder)
-        shutil.rmtree(target, ignore_errors=True)
+        safe_remove(target, staging_root)
         tmp = target + ".tmp"
-        shutil.rmtree(tmp, ignore_errors=True)
+        safe_remove(tmp, staging_root)
         with zipfile.ZipFile(matches[-1]) as archive:
             archive.extractall(tmp)
         inner = os.path.join(tmp, prefix)
         os.makedirs(target, exist_ok=True)
         for entry in os.listdir(inner):
             shutil.move(os.path.join(inner, entry), os.path.join(target, entry))
-        shutil.rmtree(tmp, ignore_errors=True)
+        safe_remove(tmp, staging_root)
         count = sum(len(files) for _r, _d, files in os.walk(target))
         print("Tcl/Tk 数据: %s -> %s (%d 个文件)" % (os.path.basename(matches[-1]), dest, count),
               flush=True)
@@ -91,6 +99,7 @@ def build(name: str, windowed: bool, onedir: bool, datas) -> int:
         "--name", name,
         "--noconfirm",
         "--clean",
+        "--noupx",
         "--onedir" if onedir else "--onefile",
         "--windowed" if windowed else "--console",
         "--distpath", os.path.join(HERE, "dist"),
@@ -117,15 +126,16 @@ def main() -> int:
     parser.add_argument("--gui-only", action="store_true")
     parser.add_argument("--cli-only", action="store_true")
     parser.add_argument("--onedir", action="store_true")
+    parser.add_argument("--onefile", action="store_true")
     parser.add_argument("--clean", action="store_true")
     parser.add_argument("--both-modes", action="store_true",
-                        help="单文件和单目录两种模式都产出 (默认只出单文件)")
+                        help="单文件和单目录两种模式都产出 (默认只出单目录)")
     args = parser.parse_args()
 
     for folder in ("build", "dist"):
         path = os.path.join(HERE, folder)
         if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+            safe_remove(path, HERE)
             print("removed", folder)
     if args.clean:
         return 0
@@ -136,7 +146,9 @@ def main() -> int:
     try:
         datas = prepare_tcl_tk(staging)
 
-        modes = [args.onedir]
+        if args.onedir and args.onefile:
+            parser.error('--onedir 和 --onefile 不能同时指定')
+        modes = [not args.onefile]
         if args.both_modes:
             modes = [False, True]
         for onedir in modes:
@@ -145,7 +157,7 @@ def main() -> int:
             if not args.gui_only:
                 build("lightstick-player-cli", windowed=False, onedir=onedir, datas=datas)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        safe_remove(staging, tempfile.gettempdir())
 
     dist = os.path.join(HERE, "dist")
     print()

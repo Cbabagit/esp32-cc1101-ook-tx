@@ -47,3 +47,7 @@ android-player/dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# MIDI firmware build
+firmware-midi/.pio/
+firmware-midi/.vscode/

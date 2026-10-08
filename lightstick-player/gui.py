@@ -26,6 +26,7 @@ import main as main_mod
 import timeline as timeline_mod
 import transport as transport_mod
 import video as video_mod
+from midi_panel import MidiPanel
 
 FUNC_NAME = {0: "常亮", 1: "1Hz", 2: "2Hz", 3: "4Hz"}
 
@@ -64,8 +65,9 @@ class PausableClock:
 class LightstickPlayerApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("lightstick-player")
-        root.geometry("1040x760")
+        root.title("lightstick-player · MIDI2 平滑控制版")
+        root.geometry("1200x840")
+        root.minsize(1050, 720)
 
         self._ui_queue = queue.Queue()   # 后台线程 -> 主线程的界面更新
         self.frames = []
@@ -89,7 +91,15 @@ class LightstickPlayerApp:
         self._video_duration_ms = 0                 # 视频时长, 缓存住别每 tick 问 libVLC
         self._log_lines = 0                         # 日志行数, 自己数, 不查 Text 控件
 
+        self.tabs = ttk.Notebook(root)
+        self.tabs.pack(fill="both", expand=True)
+        self.player_tab = ttk.Frame(self.tabs)
+        midi_tab = ttk.Frame(self.tabs)
+        self.tabs.add(self.player_tab, text="CSV / 视频播放器")
+        self.tabs.add(midi_tab, text="MIDI 键盘 · 自定义映射")
         self._build_ui()
+        self.midi_panel = MidiPanel(self, midi_tab)
+        root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh_ports()
         self._tick()
 
@@ -98,7 +108,7 @@ class LightstickPlayerApp:
         pad = dict(padx=6, pady=4)
 
         # 顶部: 文件 + 串口
-        top = ttk.LabelFrame(self.root, text="文件与连接")
+        top = ttk.LabelFrame(self.player_tab, text="文件与连接")
         top.pack(fill="x", **pad)
 
         row1 = ttk.Frame(top)
@@ -147,7 +157,7 @@ class LightstickPlayerApp:
         self.conn_state.pack(side="left", padx=6)
 
         # 播放控制
-        ctl = ttk.LabelFrame(self.root, text="播放控制")
+        ctl = ttk.LabelFrame(self.player_tab, text="播放控制")
         ctl.pack(fill="x", **pad)
         ctr = ttk.Frame(ctl)
         ctr.pack(fill="x", **pad)
@@ -212,7 +222,7 @@ class LightstickPlayerApp:
         self.time_label.pack(side="left", padx=6)
 
         # 通道预览
-        ch = ttk.LabelFrame(self.root, text="通道预览 (实时)")
+        ch = ttk.LabelFrame(self.player_tab, text="通道预览 (实时)")
         ch.pack(fill="x", **pad)
         self.ch_grid = ttk.Frame(ch)
         self.ch_grid.pack(fill="x", **pad)
@@ -223,7 +233,7 @@ class LightstickPlayerApp:
             self.swatches.append(self._channel_cell(self.ch_grid, i))
 
         # 视频预览
-        vf = ttk.LabelFrame(self.root, text="视频预览")
+        vf = ttk.LabelFrame(self.player_tab, text="视频预览")
         vf.pack(fill="both", expand=True, **pad)
         self.video_frame = tk.Frame(vf, bg="black")
         self.video_frame.pack(fill="both", expand=True, padx=2, pady=2)
@@ -237,7 +247,7 @@ class LightstickPlayerApp:
         self.video_placeholder.bind("<Double-Button-1>", lambda _e: self.toggle_fullscreen())
 
         # 日志
-        lg = ttk.LabelFrame(self.root, text="日志")
+        lg = ttk.LabelFrame(self.player_tab, text="日志")
         lg.pack(fill="x", **pad)
         self.log = tk.Text(lg, height=6, state="disabled")
         self.log.pack(fill="both", expand=True, padx=2, pady=2)
@@ -327,9 +337,11 @@ class LightstickPlayerApp:
 
     def refresh_ports(self):
         ports = transport_mod.list_ports()
+        if hasattr(self, 'midi_panel'):
+            self.midi_panel.serial_box['values'] = ports
         self.port_cb["values"] = ports
         if ports and not self.port_var.get():
-            self.port_var.set(ports[0])
+            self.port_var.set('COM10' if 'COM10' in ports else ports[0])
 
     def _on_transport_changed(self, *_args):
         """切换连接方式时, 把地址框的内容按传输类型各存一份再换回来。"""
@@ -411,6 +423,9 @@ class LightstickPlayerApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def toggle_connect(self):
+        if self.midi_panel.busy:
+            messagebox.showwarning("连接", "请先在 MIDI 页停止场控，再连接播放器。")
+            return
         if self.tx is not None:
             try:
                 self.tx.close()
@@ -504,6 +519,9 @@ class LightstickPlayerApp:
         return lambda: max(0, self.clock.now_ms() - self.sync_offset)
 
     def play(self):
+        if self.midi_panel.busy:
+            messagebox.showwarning("播放", "请先在 MIDI 页停止场控，再播放 CSV。")
+            return
         if not self.frames:
             messagebox.showwarning("lightstick-player", "请先加载 CSV")
             return
@@ -790,6 +808,20 @@ class LightstickPlayerApp:
         if self._video_duration_ms > 0:
             total = max(total, self._video_duration_ms)
         return total
+
+    def close(self):
+        self.midi_panel.close()
+        self.stop()
+        if self.tx is not None:
+            self.tx.close()
+            self.tx = None
+        def finish():
+            worker = self.midi_panel.controller.worker
+            if worker and worker.is_alive():
+                self.root.after(100, finish)
+            else:
+                self.root.destroy()
+        finish()
 
 
 def sys_platform():
